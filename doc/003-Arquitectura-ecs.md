@@ -1,12 +1,10 @@
 # ⚙️ ARQUITECTURA ECS EN BEVY (RUST): PROYECTO HEX-TACTICS
 
-Este documento recoge la implementación base en Rust para trasladar las mecánicas de **Hex-Tactics** al paradigma **Entity Component System (ECS)** de Bevy. 
-
-Aquí las unidades no son clases tradicionales; son identificadores únicos (`Entity`) que agrupan contenedores de datos puros (**Componentes**), mientras que las reglas del juego se ejecutan mediante funciones independientes (**Sistemas**).
+Este documento contiene la implementación base y la explicación detallada de la arquitectura **Entity Component System (ECS)** de Bevy para el juego **Hex-Tactics**. En este paradigma, los datos puros (**Componentes**) están completamente separados de la lógica (**Sistemas**).
 
 ---
 
-## 🛠️ Código Fuente (`game_systems.rs`)
+## 🛠️ 1. Código Fuente (`game_systems.rs`)
 
 ```rust
 use bevy::prelude::*;
@@ -150,9 +148,24 @@ pub fn sistema_economia_ronda(
 
 ---
 
-## 🧠 Explicación de la Arquitectura
+## 🧠 2. Desglose de la Arquitectura
 
-* **Componentes Modulares (`#[derive(Component)]`):** No contienen lógica. `PosicionHex` envuelve la coordenada cúbica y `EconomiaUnidad` gestiona el coste de mantenimiento. Esta separación evita conflictos con el *borrow checker* de Rust y facilita reutilizar datos (por ejemplo, darle vida y posición a un edificio sin darle movimiento).
-* **Recursos Globales (`#[derive(Resource)]`):** Almacenan información única del estado general de la partida que no pertenece a ninguna unidad individual, como el dinero del banco (`TesoreriaJugador`) o el orden de los turnos (`ColaIniciativa`).
-* **Consultas Atómicas (`Query`):** Permiten filtrar el mundo para leer o modificar (`mut`) únicamente los componentes necesarios en cada sistema, habilitando que Bevy ejecute procesos en paralelo de forma segura.
-* **Acceso por Identificador (`get_mut`):** Extrayendo el `Entity` activo de la cola de iniciativa, el sistema garantiza que durante un turno individual solo se mutan los datos de la tropa activa, dejando congelado el resto del tablero.
+### 1. Los Componentes (Los Datos Puros)
+En Rust tradicional, crearías una estructura enorme llamada `Soldado` con todo dentro. En Bevy, creamos piezas de Lego muy pequeñas llamadas **Componentes** (`#[derive(Component)]`) y se las pegamos a una entidad.
+
+* **`pub struct Unidad;`**: Es un "componente marcador" (no tiene datos por dentro). Sirve simplemente como una etiqueta para que Bevy sepa diferenciar entre un soldado y un árbol o una nube en el mapa.
+* **`pub struct PosicionHex(pub HexCoord);`**: Envuelve la coordenada matemática `(q, r, s)` que programamos antes. Si una entidad tiene este componente, significa que ocupa un lugar físico en el tablero.
+* **`Estadisticas`, `PuntosAccion`, `EconomiaUnidad`**: Son contenedores de números simples. Nota cómo `EconomiaUnidad` tiene el campo booleano `es_heroe` para aplicar la regla de tu diseño donde los héroes tienen coste cero.
+
+### 2. Los Recursos (La Memoria Global)
+Mientras que los componentes pertenecen a una unidad individual, los **Recursos** (`#[derive(Resource)]`) son datos únicos que pertenecen a toda la partida en general.
+
+* **`TesoreriaJugador`**: Es la cuenta bancaria global donde se guarda el dinero que producen tus casas.
+* **`ColaIniciativa`**: Es el cerebro de tus turnos. Guarda una lista (`Vec<Entity>`) con los identificadores numéricos de todas las unidades ordenadas por velocidad, y un puntero (`indice_actual`) que señala a quién le toca moverse en este preciso instante.
+
+### 3. Los Sistemas (El Motor de Reglas)
+Los sistemas son funciones normales de Rust. Bevy se encarga de ejecutarlas automáticamente en cada fotograma o cuando cambias de estado, pasándoles los datos que piden en sus parámetros.
+
+* **Sistema A (`calcular_linea_de_tiempo`):** Pide a Bevy el ID (`Entity`) y las `Estadisticas` de todo lo que tenga la etiqueta `Unidad`, las ordena de mayor a menor velocidad y guarda esa lista en `ColaIniciativa`.
+* **Sistema B (`sistema_movimiento_tactico`):** Consulta la cola para averiguar cuál es el ID de la unidad activa y usa `query.get_mut(entidad_activa)` para modificar *únicamente* a esa tropa. Si tiene al menos 1 Punto de Acción, calcula su casilla vecina, actualiza su coordenada y le resta 1 PA, dejando intacto el resto del tablero.
+* **Sistema C (`sistema_economia_ronda`):** Recorre todas las unidades con un bucle `for`. Si `!econ.es_heroe`, suma su coste de mantenimiento a la factura total, aplica el balance con los ingresos de las casas, dispara la alerta de *Hambruna* si la tesorería cae por debajo de cero y rellena los Puntos de Acción al máximo para la siguiente ronda global.
